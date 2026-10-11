@@ -1,0 +1,4 @@
+// Import this package with a blank import to activate native linking and
+// runtime DLL copying for applications using github.com/kanryu/hike-ai-stable-diffusion.
+package shared
+

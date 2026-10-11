@@ -1,0 +1,87 @@
+package main
+
+import "github.com/kanryu/hike-ai-stable-diffusion/sd"
+import _ "github.com/kanryu/hike-ai-stable-diffusion/shared"
+
+extern func printf(format cstring, ...) int
+extern func __hike_stderr_write(data cstring, length int32)
+
+func progressLabel(message string) {
+    __hike_stderr_write(cstring(message), int32(len(message)))
+}
+
+func main() int {
+    // Put a compatible model at this path before running the example.
+    progressLabel("[1/4] loading diffusion model...\n")
+    params := sd.ContextParams{}
+    sd.InitContextParams(&params)
+    params.ModelPath = "Illustrious-XL-v2.0.safetensors"
+    // Match the official CLI's per-module backend assignment while the
+    // reference implementation is being ported verbatim.
+    params.Backend = "diffusion=cuda0,detector=cuda0"
+
+    ctx := sd.NewContext(&params)
+    if ctx == nil {
+        printf("failed to load diffusion context\n")
+        return 1
+    }
+    progressLabel("[1/4] diffusion model and weights loaded\n")
+    defer ctx.Close()
+
+    request := sd.ImageGenParams{}
+    sd.InitImageGenParams(&request)
+    request.Prompt = "masterpiece,best quality,amazing quality,absurdres,highres,detailed eyes,beautiful,detailed background,perfect eyes,realistic,solo,cowboy shot,dynamic pose,1boy,Bridget \\(Guilty Gear\\),yo-yo,fingerless gloves,blonde hair,gloves,otoko no ko,male focus,smile,blue eyes,hood,solo,jacket,hooded jacket,cuffs,zipper pull tab,skirt,looking at viewer,black gloves,hood up,v,handcuffs,zipper,hair between eyes,habit,cross,blue jacket,fire,long sleeves,bangs,cracked floor,pleated skirt,bike shorts,grin,medium hair,long hair,black skirt,standing,blush,teeth,sidelocks,parted lips,leaning forward,fingernails,open mouth,socks,smoke,drawstring,hoodie,blue footwear,oversized object,bare legs,open clothes,shirt,shoes,nun,white socks,outdoors,miniskirt,"
+    request.NegativePrompt = "blurry, low quality"
+    request.Width = 1024
+    request.Height = 1344
+    request.BatchCount = 1
+    request.SampleParams.SampleSteps = 20
+
+    progressLabel("[2/4] generating image: sampling and VAE decode...\n")
+    images, count, ok := ctx.Generate(&request)
+    if !ok || images == nil || count <= 0 {
+        printf("image generation failed\n")
+        return 1
+    }
+    defer sd.FreeImages(images, count)
+
+    finalImage := &images[0]
+    var detailed *sd.Image
+    detailedCount := 0
+    detector := sd.NewAdetailer("face_yolov8m-face.safetensors", params.NThreads, params.Backend, params.ParamsBackend)
+    if detector != nil {
+        defer detector.Close()
+        progressLabel("[3/4] detecting faces and applying E-Detailer...\n")
+        detailParams := sd.AdetailerParams{
+            Prompt: "detailed face, detailed eyes, beautiful eyes, sharp facial features, high quality",
+            NegativePrompt: "blurry face, deformed face, bad eyes, low quality",
+            ExtraAdArgs: "confidence=0.05,mask_blur=4,inpaint_padding=32",
+        }
+        inpaint := request
+        // The official CLI preserves the original generation prompt here;
+        // ADetailer receives its override through adetailer_params.
+        inpaint.Width = 512
+        inpaint.Height = 512
+        inpaint.Strength = 0.4
+        var detailedOK bool
+        detailed, detailedCount, detailedOK = detector.DetailImage(ctx, images[0], detailParams, &inpaint)
+        if detailedOK && detailed != nil && detailedCount > 0 {
+            finalImage = &detailed[0]
+        } else {
+            progressLabel("[3/4] E-Detailer produced no result; using original image...\n")
+        }
+    } else {
+        progressLabel("[3/4] could not load face_yolov8m-face.safetensors; using original image...\n")
+    }
+
+    progressLabel("[4/4] encoding WebP...\n")
+    if !sd.SaveWebP(finalImage, "output.webp", 90.0) {
+        if detailed != nil && detailedCount > 0 { sd.FreeImages(detailed, detailedCount) }
+        printf("failed to write output.webp\n")
+        return 1
+    }
+    if detailed != nil && detailedCount > 0 { sd.FreeImages(detailed, detailedCount) }
+    printf("generated %dx%d image: output.webp\n", finalImage.Width, finalImage.Height)
+    return 0
+}
+

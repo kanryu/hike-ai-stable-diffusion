@@ -1,0 +1,19 @@
+{
+  "settings_version": "0.0.8",
+  "datasets_dir": "E:\\Home\\src\\golang\\hikec-go\\hike-ai-stable-diffusion\\datasets",
+  "weights_dir": "weights",
+  "runs_dir": "runs",
+  "uuid": "cc332b5abb6097a03e209d49e1449d4523acba3941a86d59904978d4ab08d051",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "mlflow": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

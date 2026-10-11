@@ -1,0 +1,213 @@
+package main
+
+import "github.com/kanryu/hike-ai-stable-diffusion/sd"
+import _ "github.com/kanryu/hike-ai-stable-diffusion/shared"
+import "std/fmt/sprintf"
+
+extern func printf(format cstring, ...) int
+extern func __hike_stderr_write(data cstring, length int32)
+extern func os_sleep_ms(ms uint32)
+
+func progressLabel(message string) {
+    __hike_stderr_write(cstring(message), int32(len(message)))
+    sd.FlushStderr()
+}
+
+func progress(stage int, total int, name string, percent int) {
+    // Keep the complete redraw shorter than a normal console line. A long
+    // clearing string wraps on narrow terminals and makes the next update
+    // appear on a different line.
+    suffix := "                                                                "
+    if percent >= 100 {
+        suffix = "\n"
+    }
+    message := sprintf.Sprintf("\r[%d/%d] %s %d%%%s", stage, total, name, percent, suffix)
+    progressLabel(message)
+}
+
+func progressHeader(stage int, total int, name string) {
+    message := sprintf.Sprintf("[%d/%d] %s\n", stage, total, name)
+    progressLabel(message)
+}
+
+func officialProgress(stage int, total int, name string, current sd.Progress) {
+    step := current.Step
+    steps := current.Steps
+    if steps <= 0 {
+        return
+    }
+    if step < 0 { step = 0 }
+    if step > steps { step = steps }
+
+    // Port of stable-diffusion.cpp's 50-column progress bar.
+    head := 0
+    if steps > 0 { head = step * 50 / steps }
+    bar := "  |"
+    for i := 0; i < 50; i++ {
+        if i > head {
+            bar = bar + " "
+        } else if i == head && i != 49 {
+            bar = bar + ">"
+        } else {
+            bar = bar + "="
+        }
+    }
+    bar = bar + "|"
+
+    speed := current.Time
+    unit := "s/it"
+    if speed < float32(1.0) && speed > float32(0.0) {
+        speed = float32(1.0) / speed
+        unit = "it/s"
+    }
+    suffix := "                    "
+    if step >= steps {
+        suffix = "\n"
+    }
+    // After the stage header, keep the redraw line limited to the official
+    // progress bar and its counters. The stage description must not be
+    // repeated beside every update.
+    message := sprintf.Sprintf("\r%s %d/%d - %.2f%s%s", bar, step, steps, speed, unit, suffix)
+    progressLabel(message)
+}
+
+func finishProgress() {
+    progressLabel("\n")
+}
+
+func monitorProgress(stage int, total int, name string) {
+    lastStep := -1
+    lastSteps := -1
+    progressHeader(stage, total, name)
+    for sd.OperationActive() {
+        current := sd.CurrentProgress()
+        if current.Step != lastStep || current.Steps != lastSteps {
+            officialProgress(stage, total, name, current)
+            lastStep = current.Step
+            lastSteps = current.Steps
+        }
+        os_sleep_ms(100)
+    }
+    progress(stage, total, name, 100)
+}
+
+func main() int {
+    prompt := "masterpiece,best quality,amazing quality,absurdres,highres,detailed eyes,beautiful,detailed background,perfect eyes,realistic,solo,cowboy shot,dynamic pose,1boy,Bridget \\(Guilty Gear\\),yo-yo,fingerless gloves,blonde hair,gloves,otoko no ko,male focus,smile,blue eyes,hood,solo,jacket,hooded jacket,cuffs,zipper pull tab,skirt,looking at viewer,black gloves,hood up,v,handcuffs,zipper,hair between eyes,habit,cross,blue jacket,fire,long sleeves,bangs,cracked floor,pleated skirt,bike shorts,grin,medium hair,long hair,black skirt,standing,blush,teeth,sidelocks,parted lips,leaning forward,fingernails,open mouth,socks,smoke,drawstring,hoodie,blue footwear,oversized object,bare legs,open clothes,shirt,shoes,nun,white socks,outdoors,miniskirt,"
+    negative := "blurry, low quality"
+
+    // Keep the backend report in the sample so the selected execution target
+    // is visible before any model starts loading. Empty backend specs mean
+    // that stable-diffusion.cpp selects its default backend automatically.
+    acceleratorBackend := sd.SelectAcceleratorBackend()
+    upscalerBackendSpec := acceleratorBackend
+    upscalerParamsBackendSpec := acceleratorBackend
+    sdBackendSpec := ""
+    paramsBackendSpec := ""
+    backendLabel := "default (automatic)"
+    if acceleratorBackend != "" {
+        sdBackendSpec = "diffusion=" + acceleratorBackend + ",te=" + acceleratorBackend + ",vae=" + acceleratorBackend + ",detector=" + acceleratorBackend
+        backendLabel = acceleratorBackend
+    }
+    progressLabel("AI backend configuration:\n" +
+        "  upscaler: " + backendLabel + "\n" +
+        "  upscaler parameters: " + backendLabel + "\n" +
+        "  diffusion: " + backendLabel + "\n" +
+        "  text encoder: " + backendLabel + "\n" +
+        "  VAE: " + backendLabel + "\n" +
+        "  face detector: " + backendLabel + "\n" +
+        "  model parameters: default (automatic)\n")
+
+    // The native runtime must stay silent. Hike owns all user-facing
+    // progress reporting so this can later be replaced by a GUI sink.
+    sd.SetProgressPolling(false)
+    sd.SetLogPolling(false)
+
+    progress(1, 6, "preparing SDXL output.webp...", 100)
+
+    upscaler := sd.NewUpscaler("4x-UltraSharp.pth", false, 0, 128, upscalerBackendSpec, upscalerParamsBackendSpec)
+    if upscaler == nil {
+        progressLabel("failed to load native UltraSharp upscaler\n")
+        return 1
+    }
+    defer upscaler.Close()
+    sd.ResetProgress()
+    // Set the state before queueing the worker so the monitor cannot race
+    // with worker startup and accidentally skip the polling loop.
+    sd.SetOperationActive(true)
+    upscaleMonitor := Async(func() {
+        monitorProgress(2, 6, "running native 4x UltraSharp PTH upscaler...")
+    })
+    upscaleTask := Async(func() bool {
+        ok := upscaler.UpscaleFile("../sdxl/output.webp", 4, "upscaled-4x.webp")
+        sd.SetOperationActive(false)
+        return ok
+    })
+    upscaleOK := <-upscaleTask
+    <-upscaleMonitor
+    if !upscaleOK {
+        progressLabel("native UltraSharp upscaling failed\n")
+        return 1
+    }
+
+    // The SDXL sample input is fixed at 1024x1344, so the 4x image is
+    // reduced to the requested 2048x2688 detailer input.
+    halfOK := sd.ResizeBicubicFile("upscaled-4x.webp", 2048, 2688, "bicubic-half.webp")
+    if !halfOK {
+        printf("bicubic resize failed\n")
+        return 1
+    }
+    progress(3, 6, "resizing with native bicubic filter...", 100)
+
+    contextParams := sd.ContextParams{}
+    sd.InitContextParams(&contextParams)
+    contextParams.ModelPath = "../sdxl/Illustrious-XL-v2.0.safetensors"
+    contextParams.Backend = sdBackendSpec
+    contextParams.ParamsBackend = paramsBackendSpec
+    contextParams.DiffusionFlashAttn = true
+    ctx := sd.NewContext(&contextParams)
+    if ctx == nil {
+        printf("failed to load SDXL context\n")
+        return 1
+    }
+    defer ctx.Close()
+
+    detector := sd.NewAdetailer("../sdxl/face_yolov8m-face.safetensors", contextParams.NThreads, contextParams.Backend, contextParams.ParamsBackend)
+    if detector == nil {
+        printf("failed to load face detector\n")
+        return 1
+    }
+    defer detector.Close()
+    progress(4, 6, "loading SDXL context and face detector...", 100)
+
+    inpaint := sd.ImageGenParams{}
+    sd.InitImageGenParams(&inpaint)
+    inpaint.Prompt = prompt
+    inpaint.NegativePrompt = negative
+    inpaint.Width = 512
+    inpaint.Height = 512
+    inpaint.Strength = 0.4
+    inpaint.SampleParams.SampleSteps = 20
+    detailParams := sd.AdetailerParams{}
+    detailParams.Prompt = prompt
+    detailParams.NegativePrompt = negative
+    detailParams.ExtraAdArgs = "confidence=0.05,mask_blur=4,inpaint_padding=32"
+    sd.ResetProgress()
+    sd.SetOperationActive(true)
+    detailMonitor := Async(func() {
+        monitorProgress(5, 6, "running face detailer...")
+    })
+    detailTask := Async(func() bool {
+        ok := detector.DetailImageFile(ctx, "bicubic-half.webp", detailParams, &inpaint, "output.webp")
+        sd.SetOperationActive(false)
+        return ok
+    })
+    detailedOK := <-detailTask
+    <-detailMonitor
+    if !detailedOK {
+        printf("face detailer failed\n")
+        return 1
+    }
+    progress(6, 6, "saving final output.webp...", 100)
+    printf("completed face detailer pipeline: 1024x1344 -> 2048x2688\n")
+    return 0
+}

@@ -1,0 +1,1355 @@
+// Package sd is a small Hike binding for the stable-diffusion.cpp C API.
+//
+// The native library deliberately owns the model and generated image memory.
+// Call Context.Close and FreeImages when the returned values are no longer
+// needed. Pointers in this file are opaque C handles unless documented as an
+// image or parameter structure.
+package sd
+
+// Stable-diffusion.cpp enums are represented as int in Hike. This keeps the
+// declarations portable while preserving the C ABI used by the library.
+const (
+    // rng_type_t
+    STD_DEFAULT_RNG int = 0
+    CUDA_RNG int = 1
+    CPU_RNG int = 2
+    RNG_TYPE_COUNT int = 3
+
+    // sample_method_t
+    EULER_SAMPLE_METHOD int = 0
+    EULER_A_SAMPLE_METHOD int = 1
+    HEUN_SAMPLE_METHOD int = 2
+    DPM2_SAMPLE_METHOD int = 3
+    DPMPP2S_A_SAMPLE_METHOD int = 4
+    DPMPP2M_SAMPLE_METHOD int = 5
+    DPMPP2Mv2_SAMPLE_METHOD int = 6
+    IPNDM_SAMPLE_METHOD int = 7
+    IPNDM_V_SAMPLE_METHOD int = 8
+    LCM_SAMPLE_METHOD int = 9
+    DDIM_TRAILING_SAMPLE_METHOD int = 10
+    TCD_SAMPLE_METHOD int = 11
+    RES_MULTISTEP_SAMPLE_METHOD int = 12
+    RES_2S_SAMPLE_METHOD int = 13
+    ER_SDE_SAMPLE_METHOD int = 14
+    EULER_CFG_PP_SAMPLE_METHOD int = 15
+    EULER_A_CFG_PP_SAMPLE_METHOD int = 16
+    EULER_GE_SAMPLE_METHOD int = 17
+    DPMPP2M_SDE_SAMPLE_METHOD int = 18
+    DPMPP2M_SDE_BT_SAMPLE_METHOD int = 19
+    LMS_SAMPLE_METHOD int = 20
+    SAMPLE_METHOD_COUNT int = 21
+
+    // scheduler_t
+    DISCRETE_SCHEDULER int = 0
+    KARRAS_SCHEDULER int = 1
+    EXPONENTIAL_SCHEDULER int = 2
+    AYS_SCHEDULER int = 3
+    GITS_SCHEDULER int = 4
+    SGM_UNIFORM_SCHEDULER int = 5
+    SIMPLE_SCHEDULER int = 6
+    SMOOTHSTEP_SCHEDULER int = 7
+    KL_OPTIMAL_SCHEDULER int = 8
+    LCM_SCHEDULER int = 9
+    BONG_TANGENT_SCHEDULER int = 10
+    LTX2_SCHEDULER int = 11
+    LOGIT_NORMAL_SCHEDULER int = 12
+    FLUX2_SCHEDULER int = 13
+    FLUX_SCHEDULER int = 14
+    BETA_SCHEDULER int = 15
+    LLADA_IMAGE_SCHEDULER int = 16
+    SCHEDULER_COUNT int = 17
+
+    // prediction_t
+    EPS_PRED int = 0
+    V_PRED int = 1
+    EDM_V_PRED int = 2
+    FLOW_PRED int = 3
+    FLUX_FLOW_PRED int = 4
+    SEFI_FLOW_PRED int = 5
+    MINIT2I_FLOW_PRED int = 6
+    SENSENOVA_U1_FLOW_PRED int = 7
+    PREDICTION_COUNT int = 8
+
+    // sd_type_t (same numeric values as ggml_type)
+    SD_TYPE_F32 int = 0
+    SD_TYPE_F16 int = 1
+    SD_TYPE_Q4_0 int = 2
+    SD_TYPE_Q4_1 int = 3
+    SD_TYPE_Q5_0 int = 6
+    SD_TYPE_Q5_1 int = 7
+    SD_TYPE_Q8_0 int = 8
+    SD_TYPE_Q8_1 int = 9
+    SD_TYPE_Q2_K int = 10
+    SD_TYPE_Q3_K int = 11
+    SD_TYPE_Q4_K int = 12
+    SD_TYPE_Q5_K int = 13
+    SD_TYPE_Q6_K int = 14
+    SD_TYPE_Q8_K int = 15
+    SD_TYPE_IQ2_XXS int = 16
+    SD_TYPE_IQ2_XS int = 17
+    SD_TYPE_IQ3_XXS int = 18
+    SD_TYPE_IQ1_S int = 19
+    SD_TYPE_IQ4_NL int = 20
+    SD_TYPE_IQ3_S int = 21
+    SD_TYPE_IQ2_S int = 22
+    SD_TYPE_IQ4_XS int = 23
+    SD_TYPE_I8 int = 24
+    SD_TYPE_I16 int = 25
+    SD_TYPE_I32 int = 26
+    SD_TYPE_I64 int = 27
+    SD_TYPE_F64 int = 28
+    SD_TYPE_IQ1_M int = 29
+    SD_TYPE_BF16 int = 30
+    SD_TYPE_TQ1_0 int = 34
+    SD_TYPE_TQ2_0 int = 35
+    SD_TYPE_MXFP4 int = 39
+    SD_TYPE_NVFP4 int = 40
+    SD_TYPE_Q1_0 int = 41
+    SD_TYPE_Q2_0 int = 42
+    SD_TYPE_F8_E4M3 int = 43
+    SD_TYPE_F8_E5M2 int = 44
+    SD_TYPE_COUNT int = 45
+
+    // sd_log_level_t
+    SD_LOG_DEBUG int = 0
+    SD_LOG_VERBOSE int = 1
+    SD_LOG_INFO int = 2
+    SD_LOG_WARN int = 3
+    SD_LOG_ERROR int = 4
+
+    // preview_t
+    PREVIEW_NONE int = 0
+    PREVIEW_PROJ int = 1
+    PREVIEW_TAE int = 2
+    PREVIEW_VAE int = 3
+    PREVIEW_COUNT int = 4
+
+    // lora_apply_mode_t
+    LORA_APPLY_AUTO int = 0
+    LORA_APPLY_IMMEDIATELY int = 1
+    LORA_APPLY_AT_RUNTIME int = 2
+    LORA_APPLY_MODE_COUNT int = 3
+
+    // sd_vae_format_t
+    SD_VAE_FORMAT_AUTO int = -1
+    SD_VAE_FORMAT_FLUX int = 0
+    SD_VAE_FORMAT_SD3 int = 1
+    SD_VAE_FORMAT_FLUX2 int = 2
+    SD_VAE_FORMAT_WAN int = 3
+    SD_VAE_FORMAT_COUNT int = 4
+
+    // sd_cache_mode_t
+    SD_CACHE_DISABLED int = 0
+    SD_CACHE_EASYCACHE int = 1
+    SD_CACHE_UCACHE int = 2
+    SD_CACHE_DBCACHE int = 3
+    SD_CACHE_TAYLORSEER int = 4
+    SD_CACHE_CACHE_DIT int = 5
+    SD_CACHE_SPECTRUM int = 6
+
+    // sd_hires_upscaler_t
+    SD_HIRES_UPSCALER_NONE int = 0
+    SD_HIRES_UPSCALER_LATENT int = 1
+    SD_HIRES_UPSCALER_LATENT_NEAREST int = 2
+    SD_HIRES_UPSCALER_LATENT_NEAREST_EXACT int = 3
+    SD_HIRES_UPSCALER_LATENT_ANTIALIASED int = 4
+    SD_HIRES_UPSCALER_LATENT_BICUBIC int = 5
+    SD_HIRES_UPSCALER_LATENT_BICUBIC_ANTIALIASED int = 6
+    SD_HIRES_UPSCALER_LANCZOS int = 7
+    SD_HIRES_UPSCALER_NEAREST int = 8
+    SD_HIRES_UPSCALER_MODEL int = 9
+    SD_HIRES_UPSCALER_COUNT int = 10
+
+    // sd_cancel_mode_t
+    SD_CANCEL_ALL int = 0
+    SD_CANCEL_NEW_LATENTS int = 1
+    SD_CANCEL_RESET int = 2
+
+    // Friendly aliases used by the public Hike API.
+    RNGDefault int = 0
+    RNGCUDA int = 1
+    RNGCPU int = 2
+
+    SampleEuler int = 0
+    SampleEulerA int = 1
+    SampleHeun int = 2
+    SampleDPM2 int = 3
+    SampleDPMPlusPlus2M int = 5
+    SampleLCM int = 9
+
+    SchedulerDiscrete int = 0
+    SchedulerKarras int = 1
+    SchedulerExponential int = 2
+    SchedulerSimple int = 6
+
+    PreviewNone int = 0
+    PreviewProj int = 1
+    PreviewTAE int = 2
+    PreviewVAE int = 3
+
+    TypeF32 int = 0
+    TypeF16 int = 1
+    TypeQ4_0 int = 2
+    TypeQ8_0 int = 8
+    TypeQ4_K int = 12
+    TypeQ5_K int = 13
+    TypeQ6_K int = 14
+)
+
+// Image is the byte-addressable image returned by stable-diffusion.cpp.
+// Data is owned by the native library until FreeImages is called.
+type Image struct {
+    Width uint32
+    Height uint32
+    Channel uint32
+    Data *byte
+}
+
+type NativeEmbedding struct { Name cstring; Path cstring }
+
+type NativeTilingParams struct {
+    Enabled bool
+    TemporalTiling bool
+    TileSizeW int32
+    TileSizeH int32
+    TargetOverlap float32
+    RelSizeW float32
+    RelSizeH float32
+    ExtraTilingArgs cstring
+}
+
+type NativeContextParams struct {
+    ModelPath cstring
+    ClipLPath cstring
+    ClipGPath cstring
+    ClipVisionPath cstring
+    T5XXLPath cstring
+    LLMPath cstring
+    LLMVisionPath cstring
+    DiffusionModelPath cstring
+    HighNoiseDiffusionModelPath cstring
+    UncondDiffusionModelPath cstring
+    EmbeddingsConnectorsPath cstring
+    VAEPath cstring
+    AudioVAEPath cstring
+    AudioEncoderPath cstring
+    TAESDPath cstring
+    ControlNetPath cstring
+    IPAdapterPath cstring
+    MotionModulePath cstring
+    Embeddings *NativeEmbedding
+    EmbeddingCount uint32
+    PhotoMakerPath cstring
+    PuLIDWeightsPath cstring
+    TensorTypeRules cstring
+    NThreads int32
+    WType int32
+    RNGType int32
+    SamplerRNGType int32
+    Prediction int32
+    LoRAApplyMode int32
+    EnableMMap bool
+    FlashAttn bool
+    DiffusionFlashAttn bool
+    TAEPreviewOnly bool
+    DiffusionConvDirect bool
+    VAEConvDirect bool
+    ForceSDXLVAEConvScale bool
+    VAEFormat int32
+    MaxVRAM cstring
+    DisablePrefetch bool
+    EagerLoad bool
+    Backend cstring
+    ParamsBackend cstring
+    SplitMode cstring
+    AutoFit bool
+    RPCServers cstring
+    ModelArgs cstring
+    DisableSegmentedCompute bool
+    LinearScale float32
+    AttnScale float32
+    Tokenizer cstring
+    SageAttn bool
+    ConditioningCacheSize int32
+}
+
+type NativeGuidanceParams struct {
+    TxtCFG float32
+    ImgCFG float32
+    DistilledGuidance float32
+    SLG NativeSLGParams
+}
+
+type NativeSLGParams struct {
+    // The pointer width is the ABI-relevant part here; the native API reads
+    // an array of C int values and the public Hike value is kept as-is.
+    Layers *int
+    LayerCount uint
+    LayerStart float32
+    LayerEnd float32
+    Scale float32
+}
+
+type NativeSampleParams struct {
+    Guidance NativeGuidanceParams
+    Scheduler int32
+    SampleMethod int32
+    SampleSteps int32
+    Eta float32
+    ShiftedTimestep int32
+    CustomSigmas *float32
+    CustomSigmasCount int32
+    FlowShift float32
+    ExtraSampleArgs cstring
+}
+
+type NativeLoRA struct {
+    IsHighNoise bool
+    Multiplier float32
+    Path cstring
+}
+
+type NativePhotoMakerParams struct {
+    IDImages *Image
+    IDImagesCount int32
+    IDEmbedPath cstring
+    StyleStrength float32
+}
+
+type NativePuLIDParams struct {
+    IDEmbeddingPath cstring
+    IDWeight float32
+}
+
+type NativeCacheParams struct {
+    Mode int32
+    ReuseThreshold float32
+    StartPercent float32
+    EndPercent float32
+    ErrorDecayRate float32
+    UseRelativeThreshold bool
+    ResetErrorOnCompute bool
+    FnComputeBlocks int32
+    BnComputeBlocks int32
+    ResidualDiffThreshold float32
+    MaxWarmupSteps int32
+    MaxCachedSteps int32
+    MaxContinuousCachedSteps int32
+    TaylorseerNDerivatives int32
+    TaylorseerSkipInterval int32
+    SCMMask cstring
+    SCMPolicyDynamic bool
+    SpectrumW float32
+    SpectrumM int32
+    SpectrumLam float32
+    SpectrumWindowSize int32
+    SpectrumFlexWindow float32
+    SpectrumWarmupSteps int32
+    SpectrumStopPercent float32
+}
+
+type NativeHiresParams struct {
+    Enabled bool
+    Upscaler int32
+    ModelPath cstring
+    Scale float32
+    TargetWidth int32
+    TargetHeight int32
+    Steps int32
+    DenoisingStrength float32
+    UpscaleTileSize int32
+    CustomSigmas *float32
+    CustomSigmasCount int32
+}
+
+type NativeImagePreprocessParams struct { Rules cstring }
+
+type NativeImageGenParams struct {
+    LoRAs *NativeLoRA
+    LoRACount uint32
+    Prompt cstring
+    NegativePrompt cstring
+    ClipSkip int32
+    InitImage Image
+    RefImages *Image
+    RefImagesCount int32
+    RefImageArgs cstring
+    MaskImage Image
+    Width int32
+    Height int32
+    SampleParams NativeSampleParams
+    Strength float32
+    Seed int64
+    BatchCount int32
+    ControlImage Image
+    ControlStrength float32
+    IPAdapterImage Image
+    IPAdapterStrength float32
+    PhotoMakerParams NativePhotoMakerParams
+    PuLIDParams NativePuLIDParams
+    VAETilingParams NativeTilingParams
+    CacheParams NativeCacheParams
+    HiresParams NativeHiresParams
+    QwenImageLayers int32
+    CircularX bool
+    CircularY bool
+    ImagePreprocessParams NativeImagePreprocessParams
+}
+
+type NativeAudio struct {
+    SampleRate uint32
+    Channels uint32
+    SampleCount uint64
+    Data *float32
+}
+
+// NativeVideoGenParams mirrors sd_vid_gen_params_t. Image and audio arrays
+// are intentionally represented as native pointers; higher-level video
+// helpers can be added without passing large aggregates through Hike ABI.
+type NativeVideoGenParams struct {
+    LoRAs *NativeLoRA
+    LoRACount uint32
+    Prompt cstring
+    NegativePrompt cstring
+    ClipSkip int32
+    InitImage Image
+    EndImage Image
+    RefImages *Image
+    RefImagesCount int32
+    RefVideos *byte
+    RefVideosCount int32
+    RefAudios *NativeAudio
+    RefAudiosCount int32
+    ControlFrames *Image
+    ControlFramesSize int32
+    Width int32
+    Height int32
+    SampleParams NativeSampleParams
+    HighNoiseSampleParams NativeSampleParams
+    MoeBoundary float32
+    Strength float32
+    Seed int64
+    VideoFrames int32
+    FPS int32
+    VACEStrength float32
+    VAETilingParams NativeTilingParams
+    CacheParams NativeCacheParams
+    HiresParams NativeHiresParams
+    CircularX bool
+    CircularY bool
+    ImagePreprocessParams NativeImagePreprocessParams
+}
+
+type NativeAdetailerParams struct {
+    Prompt cstring
+    NegativePrompt cstring
+    ExtraAdArgs cstring
+}
+
+// The public parameter types intentionally use Hike string values. The
+// Native* types above are private ABI mirrors and are populated only while a
+// native call is in progress.
+type Embedding struct {
+    // Name is the embedding token name exposed to the prompt tokenizer.
+    Name string
+    // Path is the embedding weights file path.
+    Path string
+}
+type TilingParams struct {
+    // Enabled enables tiled VAE encode/decode.
+    Enabled bool
+    // TemporalTiling enables temporal tiling for video-capable models.
+    TemporalTiling bool
+    // TileSizeW is the spatial tile width in pixels; zero uses the native default.
+    TileSizeW int
+    // TileSizeH is the spatial tile height in pixels; zero uses the native default.
+    TileSizeH int
+    // TargetOverlap is the fractional overlap between adjacent tiles.
+    TargetOverlap float32
+    // RelSizeW optionally sets tile width as a fraction or target tile count.
+    RelSizeW float32
+    // RelSizeH optionally sets tile height as a fraction or target tile count.
+    RelSizeH float32
+    // ExtraTilingArgs contains backend-specific tiling options.
+    ExtraTilingArgs string
+}
+type ContextParams struct {
+    // ModelPath is the main model weights file.
+    ModelPath string
+    // ClipLPath is the optional CLIP-L weights file.
+    ClipLPath string
+    // ClipGPath is the optional CLIP-G weights file.
+    ClipGPath string
+    // ClipVisionPath is the optional CLIP vision encoder weights file.
+    ClipVisionPath string
+    // T5XXLPath is the optional T5-XXL weights file.
+    T5XXLPath string
+    // LLMPath is the optional language model weights file.
+    LLMPath string
+    // LLMVisionPath is the optional multimodal language-model vision weights file.
+    LLMVisionPath string
+    // DiffusionModelPath overrides the diffusion model component in ModelPath.
+    DiffusionModelPath string
+    // HighNoiseDiffusionModelPath is the high-noise model for two-stage models.
+    HighNoiseDiffusionModelPath string
+    // UncondDiffusionModelPath is the optional unconditional diffusion model.
+    UncondDiffusionModelPath string
+    // EmbeddingsConnectorsPath is the optional embeddings connector weights file.
+    EmbeddingsConnectorsPath string
+    // VAEPath overrides the VAE weights file.
+    VAEPath string
+    // AudioVAEPath is the optional audio VAE weights file.
+    AudioVAEPath string
+    // AudioEncoderPath is the optional audio encoder weights file.
+    AudioEncoderPath string
+    // TAESDPath is the optional TAESD preview decoder weights file.
+    TAESDPath string
+    // ControlNetPath is the optional ControlNet weights file.
+    ControlNetPath string
+    // IPAdapterPath is the optional IP-Adapter weights file.
+    IPAdapterPath string
+    // MotionModulePath is the optional motion module weights file.
+    MotionModulePath string
+    // Embeddings points to the first embedding descriptor.
+    Embeddings *Embedding
+    // EmbeddingCount is the number of embedding descriptors.
+    EmbeddingCount uint32
+    // PhotoMakerPath is the optional PhotoMaker weights file.
+    PhotoMakerPath string
+    // PuLIDWeightsPath is the optional PuLID weights file.
+    PuLIDWeightsPath string
+    // TensorTypeRules selects quantization types using native rule syntax.
+    TensorTypeRules string
+    // NThreads is the CPU worker count; zero or a negative value uses native defaults.
+    NThreads int
+    // WType selects the model weight type, such as TypeF16 or TypeQ4_K.
+    WType int
+    // RNGType selects the random-number generator for sampling.
+    RNGType int
+    // SamplerRNGType selects the random-number generator used by the sampler.
+    SamplerRNGType int
+    // Prediction selects the model prediction convention.
+    Prediction int
+    // LoRAApplyMode controls when LoRA weights are applied.
+    LoRAApplyMode int
+    // EnableMMap enables memory-mapped model loading.
+    EnableMMap bool
+    // FlashAttn enables flash attention where supported.
+    FlashAttn bool
+    // DiffusionFlashAttn enables flash attention in the diffusion model.
+    DiffusionFlashAttn bool
+    // TAEPreviewOnly limits preview decoding to the TAESD path.
+    TAEPreviewOnly bool
+    // DiffusionConvDirect enables direct diffusion convolution where supported.
+    DiffusionConvDirect bool
+    // VAEConvDirect enables direct VAE convolution where supported.
+    VAEConvDirect bool
+    // ForceSDXLVAEConvScale forces the SDXL VAE convolution scale.
+    ForceSDXLVAEConvScale bool
+    // VAEFormat selects the VAE format; zero means native automatic selection.
+    VAEFormat int
+    // MaxVRAM sets an optional per-device VRAM budget, for example "8.0".
+    MaxVRAM string
+    // DisablePrefetch disables asynchronous weight prefetching.
+    DisablePrefetch bool
+    // EagerLoad loads all model parameters during context creation.
+    EagerLoad bool
+    // Backend selects the compute backend or backend assignment.
+    Backend string
+    // ParamsBackend selects the parameter-storage backend or assignment.
+    ParamsBackend string
+    // SplitMode selects layer/row weight distribution across devices.
+    SplitMode string
+    // AutoFit enables automatic model fitting to available device memory.
+    AutoFit bool
+    // RPCServers lists optional remote backend servers.
+    RPCServers string
+    // ModelArgs contains model-specific native options.
+    ModelArgs string
+    // DisableSegmentedCompute forces monolithic graph execution.
+    DisableSegmentedCompute bool
+    // LinearScale overrides the model's linear input scale; zero keeps the default.
+    LinearScale float32
+    // AttnScale overrides flash-attention K/V scaling; zero keeps the default.
+    AttnScale float32
+    // Tokenizer is the tokenizer JSON path or tokenizer assignment string.
+    Tokenizer string
+    // SageAttn enables Sage attention where supported.
+    SageAttn bool
+    // ConditioningCacheSize is the maximum cached conditioning-entry count.
+    ConditioningCacheSize int
+}
+type GuidanceParams struct {
+    // TxtCFG is the text classifier-free guidance scale.
+    TxtCFG float32
+    // ImgCFG is the image/reference guidance scale.
+    ImgCFG float32
+    // DistilledGuidance is the guidance value for distilled models.
+    DistilledGuidance float32
+    // SLG contains skip-layer guidance settings.
+    SLG SLGParams
+}
+type SLGParams struct {
+    // Layers points to the skip-layer indices.
+    Layers *int
+    // LayerCount is the number of entries in Layers.
+    LayerCount uint
+    // LayerStart is the normalized sampling start fraction.
+    LayerStart float32
+    // LayerEnd is the normalized sampling end fraction.
+    LayerEnd float32
+    // Scale is the skip-layer guidance scale.
+    Scale float32
+}
+type SampleParams struct {
+    // Guidance contains classifier-free and skip-layer guidance settings.
+    Guidance GuidanceParams
+    // Scheduler selects the noise schedule.
+    Scheduler int
+    // SampleMethod selects the denoising sampler.
+    SampleMethod int
+    // SampleSteps is the number of denoising steps.
+    SampleSteps int
+    // Eta controls stochasticity for samplers that support it.
+    Eta float32
+    // ShiftedTimestep applies a timestep shift for supported models.
+    ShiftedTimestep int
+    // CustomSigmas points to optional custom noise-sigma values.
+    CustomSigmas *float32
+    // CustomSigmasCount is the number of values in CustomSigmas.
+    CustomSigmasCount int
+    // FlowShift controls flow-matching timestep shifting.
+    FlowShift float32
+    // ExtraSampleArgs contains sampler-specific native options.
+    ExtraSampleArgs string
+}
+type LoRA struct {
+    // IsHighNoise marks this LoRA as belonging to the high-noise stage.
+    IsHighNoise bool
+    // Multiplier is the LoRA strength.
+    Multiplier float32
+    // Path is the LoRA weights file path.
+    Path string
+}
+type PhotoMakerParams struct {
+    // IDImages points to the identity reference images.
+    IDImages *Image
+    // IDImagesCount is the number of identity reference images.
+    IDImagesCount int
+    // IDEmbedPath is the optional PhotoMaker identity embedding path.
+    IDEmbedPath string
+    // StyleStrength controls the style contribution.
+    StyleStrength float32
+}
+type PuLIDParams struct {
+    // IDEmbeddingPath is the identity embedding file path.
+    IDEmbeddingPath string
+    // IDWeight controls identity preservation strength.
+    IDWeight float32
+}
+type CacheParams struct {
+    // Mode selects the diffusion cache algorithm.
+    Mode int
+    // ReuseThreshold is the cache reuse error threshold.
+    ReuseThreshold float32
+    // StartPercent is the normalized sampling point where caching begins.
+    StartPercent float32
+    // EndPercent is the normalized sampling point where caching ends.
+    EndPercent float32
+    // ErrorDecayRate controls cache-error decay between steps.
+    ErrorDecayRate float32
+    // UseRelativeThreshold interprets ReuseThreshold relative to the signal.
+    UseRelativeThreshold bool
+    // ResetErrorOnCompute resets accumulated cache error after computation.
+    ResetErrorOnCompute bool
+    // FnComputeBlocks is the number of forward blocks to compute.
+    FnComputeBlocks int
+    // BnComputeBlocks is the number of backward blocks to compute.
+    BnComputeBlocks int
+    // ResidualDiffThreshold is the residual-difference cutoff.
+    ResidualDiffThreshold float32
+    // MaxWarmupSteps disables caching during this initial step count.
+    MaxWarmupSteps int
+    // MaxCachedSteps limits the total cached steps.
+    MaxCachedSteps int
+    // MaxContinuousCachedSteps limits consecutive cache reuse.
+    MaxContinuousCachedSteps int
+    // TaylorseerNDerivatives is the Taylor-series derivative count.
+    TaylorseerNDerivatives int
+    // TaylorseerSkipInterval is the Taylorseer recomputation interval.
+    TaylorseerSkipInterval int
+    // SCMMask contains the optional step/channel mask.
+    SCMMask string
+    // SCMPolicyDynamic enables dynamic SCM policy selection.
+    SCMPolicyDynamic bool
+    // SpectrumW is the spectrum-cache weighting value.
+    SpectrumW float32
+    // SpectrumM is the spectrum-cache rank/segment count.
+    SpectrumM int
+    // SpectrumLam is the spectrum-cache regularization value.
+    SpectrumLam float32
+    // SpectrumWindowSize is the spectrum-cache window length.
+    SpectrumWindowSize int
+    // SpectrumFlexWindow controls adaptive spectrum windowing.
+    SpectrumFlexWindow float32
+    // SpectrumWarmupSteps is the spectrum-cache warmup count.
+    SpectrumWarmupSteps int
+    // SpectrumStopPercent is the normalized spectrum-cache stop point.
+    SpectrumStopPercent float32
+}
+type HiresParams struct {
+    // Enabled enables high-resolution refinement or upscaling.
+    Enabled bool
+    // Upscaler selects the high-resolution upscaler implementation.
+    Upscaler int
+    // ModelPath is the optional upscaler model path.
+    ModelPath string
+    // Scale is the requested upscaling factor.
+    Scale float32
+    // TargetWidth is the requested output width in pixels.
+    TargetWidth int
+    // TargetHeight is the requested output height in pixels.
+    TargetHeight int
+    // Steps is the number of high-resolution denoising steps.
+    Steps int
+    // DenoisingStrength controls high-resolution denoising.
+    DenoisingStrength float32
+    // UpscaleTileSize is the upscaler tile size in pixels.
+    UpscaleTileSize int
+    // CustomSigmas points to optional high-resolution sigma values.
+    CustomSigmas *float32
+    // CustomSigmasCount is the number of values in CustomSigmas.
+    CustomSigmasCount int
+}
+type ImagePreprocessParams struct {
+    // Rules contains semicolon-separated image preprocessing rules.
+    Rules string
+}
+type ImageGenParams struct {
+    // LoRAs points to the first LoRA descriptor.
+    LoRAs *LoRA
+    // LoRACount is the number of descriptors in LoRAs.
+    LoRACount uint32
+    // Prompt is the positive text prompt.
+    Prompt string
+    // NegativePrompt is the negative text prompt.
+    NegativePrompt string
+    // ClipSkip controls how many final CLIP layers are skipped.
+    ClipSkip int
+    // InitImage is the optional image-to-image input image.
+    InitImage Image
+    // RefImages points to optional reference images.
+    RefImages *Image
+    // RefImagesCount is the number of reference images.
+    RefImagesCount int
+    // RefImageArgs contains reference-image-specific native options.
+    RefImageArgs string
+    // MaskImage is the optional inpainting mask image.
+    MaskImage Image
+    // Width is the generated image width in pixels.
+    Width int
+    // Height is the generated image height in pixels.
+    Height int
+    // SampleParams controls sampler, scheduler, guidance, and steps.
+    SampleParams SampleParams
+    // Strength controls image-to-image denoising strength.
+    Strength float32
+    // Seed selects the random seed; negative values request a random seed.
+    Seed int64
+    // BatchCount is the number of images to generate.
+    BatchCount int
+    // ControlImage is the optional ControlNet input image.
+    ControlImage Image
+    // ControlStrength controls ControlNet influence.
+    ControlStrength float32
+    // IPAdapterImage is the optional IP-Adapter reference image.
+    IPAdapterImage Image
+    // IPAdapterStrength controls IP-Adapter influence.
+    IPAdapterStrength float32
+    // PhotoMakerParams contains optional PhotoMaker identity inputs.
+    PhotoMakerParams PhotoMakerParams
+    // PuLIDParams contains optional PuLID identity inputs.
+    PuLIDParams PuLIDParams
+    // VAETilingParams controls tiled VAE processing.
+    VAETilingParams TilingParams
+    // CacheParams controls optional diffusion-step caching.
+    CacheParams CacheParams
+    // HiresParams controls optional high-resolution refinement.
+    HiresParams HiresParams
+    // QwenImageLayers selects the number of Qwen Image layers.
+    QwenImageLayers int
+    // CircularX enables horizontal circular padding.
+    CircularX bool
+    // CircularY enables vertical circular padding.
+    CircularY bool
+    // ImagePreprocessParams controls input image preprocessing.
+    ImagePreprocessParams ImagePreprocessParams
+}
+
+extern func sd_ctx_params_init(params *NativeContextParams)
+extern func new_sd_ctx(params *NativeContextParams) *byte
+extern func free_sd_ctx(ctx *byte)
+extern func sd_ctx_supports_image_generation(ctx *byte) bool
+extern func sd_ctx_supports_video_generation(ctx *byte) bool
+extern func sd_ctx_load_control_net(ctx *byte, path cstring) bool
+extern func sd_ctx_unload_control_net(ctx *byte) bool
+extern func sd_ctx_has_control_net(ctx *byte) bool
+extern func sd_get_model_version_name(ctx *byte) cstring
+extern func sd_get_num_physical_cores() int32
+extern func sd_get_system_info() cstring
+extern func sd_commit() cstring
+extern func sd_version() cstring
+extern func sd_get_default_sample_method(ctx *byte) int
+extern func sd_get_default_scheduler(ctx *byte, sampleMethod int) int
+extern func str_to_sd_type(value cstring) int
+extern func str_to_rng_type(value cstring) int
+extern func str_to_sample_method(value cstring) int
+extern func str_to_scheduler(value cstring) int
+extern func str_to_prediction(value cstring) int
+extern func str_to_preview(value cstring) int
+extern func str_to_lora_apply_mode(value cstring) int
+extern func str_to_sd_hires_upscaler(value cstring) int
+extern func hike_ctx_params_to_str(params *NativeContextParams) cstring
+extern func hike_sample_params_to_str(params *NativeSampleParams) cstring
+extern func hike_img_gen_params_to_str(params *NativeImageGenParams) cstring
+extern func hike_set_progress_polling(enabled bool)
+extern func hike_flush_stderr()
+extern func hike_select_accelerator_backend() cstring
+extern func hike_progress_step_value() int
+extern func hike_progress_steps_value() int
+extern func hike_progress_time_value() float32
+extern func hike_reset_progress()
+extern func hike_set_operation_active(active bool)
+extern func hike_operation_is_active() bool
+extern func hike_set_log_polling(enabled bool)
+extern func hike_last_log_value() cstring
+extern func hike_set_preview_polling(enabled bool, mode int, interval int, denoised bool, noisy bool)
+extern func hike_copy_preview(output *Image) bool
+extern func hike_get_preview_info(samplePass *int, totalSteps *int)
+
+extern func sd_sample_params_init(params *NativeSampleParams)
+extern func sd_cache_params_init(params *NativeCacheParams)
+extern func sd_hires_params_init(params *NativeHiresParams)
+extern func sd_img_gen_params_init(params *NativeImageGenParams)
+extern func sd_vid_gen_params_init(params *NativeVideoGenParams)
+extern func generate_image(ctx *byte, params *NativeImageGenParams, images **Image, count *int32) bool
+extern func generate_video(ctx *byte, params *NativeVideoGenParams, frames **Image, frameCount *int32, audio **NativeAudio, fps *int32) bool
+extern func free_sd_images(images *Image, count int32)
+extern func free_sd_audio(audio *NativeAudio)
+extern func sd_cancel_generation(ctx *byte, mode int)
+extern func sd_type_name(value int) cstring
+extern func sd_rng_type_name(value int) cstring
+extern func sd_sample_method_name(value int) cstring
+extern func sd_scheduler_name(value int) cstring
+extern func sd_preview_name(value int) cstring
+extern func sd_list_devices(buffer *byte, bufferSize uint) uint
+extern func WebPEncodeRGB(rgb *byte, width int, height int, stride int, quality float32, output **byte) int
+extern func WebPEncodeRGBA(rgba *byte, width int, height int, stride int, quality float32, output **byte) int
+extern func WebPFree(output *byte)
+extern func fopen(path cstring, mode cstring) *byte
+extern func fwrite(data *byte, size int, count int, file *byte) int
+extern func fclose(file *byte) int
+extern func new_upscaler_ctx(esrganPath cstring, direct bool, nThreads int, tileSize int, backend cstring, paramsBackend cstring) *byte
+extern func free_upscaler_ctx(ctx *byte)
+extern func upscale(ctx *byte, input Image, factor uint32, images **Image, count *int32) bool
+extern func hike_upscale_image(ctx *byte, data *byte, width int32, height int32, channel int32, factor uint32, images **Image, count *int32) bool
+extern func hike_upscale_file(ctx *byte, inputPath cstring, factor uint32, outputPath cstring) bool
+extern func hike_adetail_file(ctx *byte, sdCtx *byte, inputPath cstring, params *NativeAdetailerParams, inpaint *NativeImageGenParams, outputPath cstring) bool
+extern func get_upscale_factor(ctx *byte) int
+extern func get_upscaler_model_scale(modelPath cstring) int
+extern func hike_load_webp(path cstring, image *Image) bool
+extern func hike_free_image(image *Image)
+extern func hike_resize_bicubic(input *Image, width uint32, height uint32, output *Image) bool
+extern func hike_resize_bicubic_file(inputPath cstring, width uint32, height uint32, outputPath cstring) bool
+extern func new_adetailer_ctx(detectorPath cstring, nThreads int, backend cstring, paramsBackend cstring) *byte
+extern func free_adetailer_ctx(ctx *byte)
+extern func adetail_image(ctx *byte, sdCtx *byte, input Image, params *NativeAdetailerParams, inpaint *NativeImageGenParams, images **Image, count *int32) bool
+extern func hike_preprocess_canny(image *Image, highThreshold float32, lowThreshold float32, weak float32, strong float32, inverse bool) bool
+extern func convert(inputPath cstring, vaePath cstring, outputPath cstring, outputType int, tensorTypeRules cstring, convertName bool) bool
+extern func convert_with_components(modelPath cstring, clipLPath cstring, clipGPath cstring, t5xxlPath cstring, diffusionModelPath cstring, vaePath cstring, outputPath cstring, outputType int, tensorTypeRules cstring, convertName bool, nThreads int, loras *byte, loraCount int) bool
+extern func load_imatrix(path cstring) bool
+extern func save_imatrix(path cstring)
+extern func enable_imatrix_collection()
+extern func disable_imatrix_collection()
+
+func nativeCString(value string) cstring {
+    if value == "" { return nil }
+    return cstring(value)
+}
+
+func nativeContextParams(p *ContextParams) NativeContextParams {
+    n := NativeContextParams{}
+    sd_ctx_params_init(&n)
+    if p == nil { return n }
+    n.ModelPath = nativeCString(p.ModelPath); n.ClipLPath = nativeCString(p.ClipLPath)
+    n.ClipGPath = nativeCString(p.ClipGPath); n.ClipVisionPath = nativeCString(p.ClipVisionPath)
+    n.T5XXLPath = nativeCString(p.T5XXLPath); n.LLMPath = nativeCString(p.LLMPath)
+    n.LLMVisionPath = nativeCString(p.LLMVisionPath); n.DiffusionModelPath = nativeCString(p.DiffusionModelPath)
+    n.HighNoiseDiffusionModelPath = nativeCString(p.HighNoiseDiffusionModelPath)
+    n.UncondDiffusionModelPath = nativeCString(p.UncondDiffusionModelPath)
+    n.EmbeddingsConnectorsPath = nativeCString(p.EmbeddingsConnectorsPath)
+    n.VAEPath = nativeCString(p.VAEPath); n.AudioVAEPath = nativeCString(p.AudioVAEPath)
+    n.AudioEncoderPath = nativeCString(p.AudioEncoderPath); n.TAESDPath = nativeCString(p.TAESDPath)
+    n.ControlNetPath = nativeCString(p.ControlNetPath); n.IPAdapterPath = nativeCString(p.IPAdapterPath)
+    n.MotionModulePath = nativeCString(p.MotionModulePath)
+    var embedding NativeEmbedding
+    if p.Embeddings != nil {
+        embedding.Name = nativeCString(p.Embeddings.Name); embedding.Path = nativeCString(p.Embeddings.Path)
+        n.Embeddings = &embedding
+    }
+    n.EmbeddingCount = p.EmbeddingCount; n.PhotoMakerPath = nativeCString(p.PhotoMakerPath)
+    n.PuLIDWeightsPath = nativeCString(p.PuLIDWeightsPath); n.TensorTypeRules = nativeCString(p.TensorTypeRules)
+    n.NThreads = int32(p.NThreads); n.WType = int32(p.WType); n.RNGType = int32(p.RNGType); n.SamplerRNGType = int32(p.SamplerRNGType)
+    n.Prediction = int32(p.Prediction); n.LoRAApplyMode = int32(p.LoRAApplyMode); n.EnableMMap = p.EnableMMap
+    n.FlashAttn = p.FlashAttn; n.DiffusionFlashAttn = p.DiffusionFlashAttn; n.TAEPreviewOnly = p.TAEPreviewOnly
+    n.DiffusionConvDirect = p.DiffusionConvDirect; n.VAEConvDirect = p.VAEConvDirect
+    n.ForceSDXLVAEConvScale = p.ForceSDXLVAEConvScale; n.VAEFormat = int32(p.VAEFormat)
+    n.MaxVRAM = nativeCString(p.MaxVRAM); n.DisablePrefetch = p.DisablePrefetch; n.EagerLoad = p.EagerLoad
+    n.Backend = nativeCString(p.Backend); n.ParamsBackend = nativeCString(p.ParamsBackend)
+    n.SplitMode = nativeCString(p.SplitMode); n.AutoFit = p.AutoFit; n.RPCServers = nativeCString(p.RPCServers)
+    n.ModelArgs = nativeCString(p.ModelArgs); n.DisableSegmentedCompute = p.DisableSegmentedCompute
+    n.LinearScale = p.LinearScale; n.AttnScale = p.AttnScale; n.Tokenizer = nativeCString(p.Tokenizer)
+    n.SageAttn = p.SageAttn; n.ConditioningCacheSize = int32(p.ConditioningCacheSize)
+    return n
+}
+
+func nativeSampleParams(p SampleParams) NativeSampleParams {
+    n := NativeSampleParams{}
+    n.Guidance.TxtCFG = p.Guidance.TxtCFG; n.Guidance.ImgCFG = p.Guidance.ImgCFG
+    n.Guidance.DistilledGuidance = p.Guidance.DistilledGuidance
+    n.Guidance.SLG.Layers = p.Guidance.SLG.Layers; n.Guidance.SLG.LayerCount = p.Guidance.SLG.LayerCount
+    n.Guidance.SLG.LayerStart = p.Guidance.SLG.LayerStart; n.Guidance.SLG.LayerEnd = p.Guidance.SLG.LayerEnd
+    n.Guidance.SLG.Scale = p.Guidance.SLG.Scale; n.Scheduler = int32(p.Scheduler); n.SampleMethod = int32(p.SampleMethod)
+    n.SampleSteps = int32(p.SampleSteps); n.Eta = p.Eta; n.ShiftedTimestep = int32(p.ShiftedTimestep)
+    n.CustomSigmas = p.CustomSigmas; n.CustomSigmasCount = int32(p.CustomSigmasCount); n.FlowShift = p.FlowShift
+    n.ExtraSampleArgs = nativeCString(p.ExtraSampleArgs)
+    return n
+}
+
+func nativeCacheParams(p CacheParams) NativeCacheParams {
+    return NativeCacheParams{Mode:int32(p.Mode), ReuseThreshold:p.ReuseThreshold, StartPercent:p.StartPercent,
+        EndPercent:p.EndPercent, ErrorDecayRate:p.ErrorDecayRate, UseRelativeThreshold:p.UseRelativeThreshold,
+        ResetErrorOnCompute:p.ResetErrorOnCompute, FnComputeBlocks:p.FnComputeBlocks, BnComputeBlocks:p.BnComputeBlocks,
+        ResidualDiffThreshold:p.ResidualDiffThreshold, MaxWarmupSteps:int32(p.MaxWarmupSteps), MaxCachedSteps:int32(p.MaxCachedSteps),
+        MaxContinuousCachedSteps:int32(p.MaxContinuousCachedSteps), TaylorseerNDerivatives:int32(p.TaylorseerNDerivatives),
+        TaylorseerSkipInterval:int32(p.TaylorseerSkipInterval), SCMMask:nativeCString(p.SCMMask), SCMPolicyDynamic:p.SCMPolicyDynamic,
+        SpectrumW:p.SpectrumW, SpectrumM:int32(p.SpectrumM), SpectrumLam:p.SpectrumLam, SpectrumWindowSize:int32(p.SpectrumWindowSize),
+        SpectrumFlexWindow:p.SpectrumFlexWindow, SpectrumWarmupSteps:int32(p.SpectrumWarmupSteps), SpectrumStopPercent:p.SpectrumStopPercent}
+}
+
+func nativeHiresParams(p HiresParams) NativeHiresParams {
+    return NativeHiresParams{Enabled:p.Enabled, Upscaler:int32(p.Upscaler), ModelPath:nativeCString(p.ModelPath), Scale:p.Scale,
+        TargetWidth:int32(p.TargetWidth), TargetHeight:int32(p.TargetHeight), Steps:int32(p.Steps), DenoisingStrength:p.DenoisingStrength,
+        UpscaleTileSize:int32(p.UpscaleTileSize), CustomSigmas:p.CustomSigmas, CustomSigmasCount:int32(p.CustomSigmasCount)}
+}
+
+// Populate a native generation structure in caller-owned storage. Keeping the
+// large aggregate out of the Hike function return ABI makes this boundary
+// independent of platform-specific aggregate-return conventions.
+func nativeImageGenParamsInto(p *ImageGenParams, n *NativeImageGenParams) {
+    if n == nil { return }
+    sd_img_gen_params_init(n)
+    if p == nil { return }
+    var lora NativeLoRA
+    if p.LoRAs != nil {
+        lora.IsHighNoise = p.LoRAs.IsHighNoise; lora.Multiplier = p.LoRAs.Multiplier
+        lora.Path = nativeCString(p.LoRAs.Path); n.LoRAs = &lora
+    }
+    n.LoRACount = p.LoRACount; n.Prompt = nativeCString(p.Prompt); n.NegativePrompt = nativeCString(p.NegativePrompt)
+    n.ClipSkip = int32(p.ClipSkip); n.InitImage = p.InitImage; n.RefImages = p.RefImages; n.RefImagesCount = int32(p.RefImagesCount)
+    n.RefImageArgs = nativeCString(p.RefImageArgs); n.MaskImage = p.MaskImage; n.Width = p.Width; n.Height = p.Height
+    n.SampleParams = nativeSampleParams(p.SampleParams); n.Strength = p.Strength; n.Seed = p.Seed; n.BatchCount = int32(p.BatchCount)
+    n.ControlImage = p.ControlImage; n.ControlStrength = p.ControlStrength; n.IPAdapterImage = p.IPAdapterImage
+    n.IPAdapterStrength = p.IPAdapterStrength; n.QwenImageLayers = int32(p.QwenImageLayers); n.CircularX = p.CircularX; n.CircularY = p.CircularY
+    n.VAETilingParams = NativeTilingParams{Enabled:p.VAETilingParams.Enabled, TemporalTiling:p.VAETilingParams.TemporalTiling,
+        TileSizeW:int32(p.VAETilingParams.TileSizeW), TileSizeH:int32(p.VAETilingParams.TileSizeH), TargetOverlap:p.VAETilingParams.TargetOverlap,
+        RelSizeW:p.VAETilingParams.RelSizeW, RelSizeH:p.VAETilingParams.RelSizeH, ExtraTilingArgs:nativeCString(p.VAETilingParams.ExtraTilingArgs)}
+    n.CacheParams = nativeCacheParams(p.CacheParams); n.HiresParams = nativeHiresParams(p.HiresParams)
+    n.ImagePreprocessParams.Rules = nativeCString(p.ImagePreprocessParams.Rules)
+    n.PhotoMakerParams.IDImages = p.PhotoMakerParams.IDImages; n.PhotoMakerParams.IDImagesCount = int32(p.PhotoMakerParams.IDImagesCount)
+    n.PhotoMakerParams.IDEmbedPath = nativeCString(p.PhotoMakerParams.IDEmbedPath); n.PhotoMakerParams.StyleStrength = p.PhotoMakerParams.StyleStrength
+    n.PuLIDParams.IDEmbeddingPath = nativeCString(p.PuLIDParams.IDEmbeddingPath); n.PuLIDParams.IDWeight = p.PuLIDParams.IDWeight
+}
+
+// Context owns a native model instance.
+type Context struct { handle *byte }
+
+// Upscaler owns an ESRGAN upscaling context.
+type Upscaler struct { handle *byte }
+
+// Adetailer owns an ADetailer detector context.
+type Adetailer struct { handle *byte }
+
+// AdetailerParams configures optional prompt overrides for face/detail
+// detection and inpainting.
+type AdetailerParams struct {
+    // Prompt is the positive inpainting prompt override.
+    Prompt string
+    // NegativePrompt is the negative inpainting prompt override.
+    NegativePrompt string
+    // ExtraAdArgs contains native ADetailer options.
+    ExtraAdArgs string
+}
+
+// NewUpscaler loads an ESRGAN model. The model path may be empty only when
+// the native backend supports a model-free configuration.
+func NewUpscaler(esrganPath string, direct bool, nThreads int, tileSize int, backend string, paramsBackend string) *Upscaler {
+    handle := new_upscaler_ctx(nativeCString(esrganPath), direct, nThreads, tileSize, nativeCString(backend), nativeCString(paramsBackend))
+    if handle == nil { return nil }
+    return &Upscaler{handle: handle}
+}
+
+func (u *Upscaler) Close() {
+    if u != nil && u.handle != nil { free_upscaler_ctx(u.handle); u.handle = nil }
+}
+
+// Upscale returns native-owned images. Release them with FreeImages.
+func (u *Upscaler) Upscale(input Image, factor uint32) (*Image, int, bool) {
+    if u == nil || u.handle == nil || factor == 0 { return nil, 0, false }
+    var images *Image; count := int32(0)
+    ok := hike_upscale_image(u.handle, input.Data, int32(input.Width), int32(input.Height), int32(input.Channel), factor, &images, &count)
+    if !ok { return nil, 0, false }
+    return images, int(count), true
+}
+
+// UpscaleFile performs native ESRGAN upscaling entirely in the native layer.
+// This avoids passing the 24-byte image aggregate through the Hike ABI.
+func (u *Upscaler) UpscaleFile(inputPath string, factor uint32, outputPath string) bool {
+    if u == nil || u.handle == nil || factor == 0 { return false }
+    return hike_upscale_file(u.handle, nativeCString(inputPath), factor, nativeCString(outputPath))
+}
+
+func (u *Upscaler) Factor() int { if u == nil || u.handle == nil { return 0 }; return get_upscale_factor(u.handle) }
+func UpscalerModelScale(modelPath string) int { return get_upscaler_model_scale(nativeCString(modelPath)) }
+
+// LoadWebP decodes an RGB WebP file in the native image layer.
+func LoadWebP(path string) (*Image, bool) {
+    image := Image{}
+    if !hike_load_webp(nativeCString(path), &image) { return nil, false }
+    return &image, true
+}
+
+// FreeImage releases an image allocated by LoadWebP or ResizeBicubic.
+func FreeImage(image *Image) {
+    if image != nil { hike_free_image(image) }
+}
+
+// ResizeBicubic applies the native bicubic image filter.
+func ResizeBicubic(input *Image, width uint32, height uint32) (*Image, bool) {
+    if input == nil { return nil, false }
+    output := Image{}
+    if !hike_resize_bicubic(input, width, height, &output) { return nil, false }
+    return &output, true
+}
+
+// ResizeBicubicFile applies bicubic resize in the native layer and writes WebP.
+func ResizeBicubicFile(inputPath string, width uint32, height uint32, outputPath string) bool {
+    return hike_resize_bicubic_file(nativeCString(inputPath), width, height, nativeCString(outputPath))
+}
+
+
+// NewAdetailer loads an ADetailer detector model.
+func NewAdetailer(detectorPath string, nThreads int, backend string, paramsBackend string) *Adetailer {
+    handle := new_adetailer_ctx(nativeCString(detectorPath), nThreads, nativeCString(backend), nativeCString(paramsBackend))
+    if handle == nil { return nil }
+    return &Adetailer{handle: handle}
+}
+
+func (a *Adetailer) Close() {
+    if a != nil && a.handle != nil { free_adetailer_ctx(a.handle); a.handle = nil }
+}
+
+// DetailImage applies detection and inpainting using the supplied diffusion
+// context. Returned images are native-owned and must be released with
+// FreeImages.
+func (a *Adetailer) DetailImage(diffusion *Context, input Image, params AdetailerParams, inpaint *ImageGenParams) (*Image, int, bool) {
+    if a == nil || a.handle == nil || diffusion == nil || diffusion.handle == nil || inpaint == nil { return nil, 0, false }
+    nativeParams := NativeAdetailerParams{Prompt:nativeCString(params.Prompt), NegativePrompt:nativeCString(params.NegativePrompt), ExtraAdArgs:nativeCString(params.ExtraAdArgs)}
+    nativeInpaint := NativeImageGenParams{}
+    nativeImageGenParamsInto(inpaint, &nativeInpaint)
+    var images *Image; count := int32(0)
+    ok := adetail_image(a.handle, diffusion.handle, input, &nativeParams, &nativeInpaint, &images, &count)
+    if !ok { return nil, 0, false }
+    return images, int(count), true
+}
+
+// DetailImageFile keeps WebP decoding, ADetailer processing, and encoding in
+// the native layer so the 24-byte Image aggregate never crosses the Hike ABI.
+func (a *Adetailer) DetailImageFile(diffusion *Context, inputPath string, params AdetailerParams, inpaint *ImageGenParams, outputPath string) bool {
+    if a == nil || a.handle == nil || diffusion == nil || diffusion.handle == nil || inpaint == nil { return false }
+    nativeParams := NativeAdetailerParams{Prompt:nativeCString(params.Prompt), NegativePrompt:nativeCString(params.NegativePrompt), ExtraAdArgs:nativeCString(params.ExtraAdArgs)}
+    nativeInpaint := NativeImageGenParams{}
+    nativeImageGenParamsInto(inpaint, &nativeInpaint)
+    return hike_adetail_file(a.handle, diffusion.handle, nativeCString(inputPath), &nativeParams, &nativeInpaint, nativeCString(outputPath))
+}
+
+func NewContext(params *ContextParams) *Context {
+    if params == nil { return nil }
+    nativeParams := nativeContextParams(params)
+    handle := new_sd_ctx(&nativeParams)
+    if handle == nil { return nil }
+    return &Context{handle: handle}
+}
+
+func (c *Context) Close() {
+    if c != nil && c.handle != nil {
+        free_sd_ctx(c.handle)
+        c.handle = nil
+    }
+}
+
+func (c *Context) SupportsImageGeneration() bool {
+    return c != nil && c.handle != nil && sd_ctx_supports_image_generation(c.handle)
+}
+
+func (c *Context) SupportsVideoGeneration() bool {
+    return c != nil && c.handle != nil && sd_ctx_supports_video_generation(c.handle)
+}
+
+// LoadControlNet hot-swaps a ControlNet on an idle context.
+func (c *Context) LoadControlNet(path string) bool {
+    if c == nil || c.handle == nil { return false }
+    return sd_ctx_load_control_net(c.handle, nativeCString(path))
+}
+
+func (c *Context) UnloadControlNet() bool {
+    if c == nil || c.handle == nil { return false }
+    return sd_ctx_unload_control_net(c.handle)
+}
+
+func (c *Context) HasControlNet() bool {
+    return c != nil && c.handle != nil && sd_ctx_has_control_net(c.handle)
+}
+
+func (c *Context) DefaultSampleMethod() int {
+    if c == nil || c.handle == nil { return -1 }
+    return sd_get_default_sample_method(c.handle)
+}
+
+func (c *Context) DefaultScheduler(sampleMethod int) int {
+    if c == nil || c.handle == nil { return -1 }
+    return sd_get_default_scheduler(c.handle, sampleMethod)
+}
+
+func (c *Context) ModelVersion() string {
+    if c == nil || c.handle == nil { return "" }
+    value := sd_get_model_version_name(c.handle)
+    if value == nil { return "" }
+    return string(value)
+}
+
+func (c *Context) Generate(params *ImageGenParams) (*Image, int, bool) {
+    if c == nil || c.handle == nil || params == nil { return nil, 0, false }
+    nativeParams := NativeImageGenParams{}
+    nativeImageGenParamsInto(params, &nativeParams)
+    var images *Image
+    count := int32(0)
+    ok := generate_image(c.handle, &nativeParams, &images, &count)
+    if !ok { return nil, 0, false }
+    return images, int(count), true
+}
+
+// GenerateVideoNative exposes the official video API while keeping its
+// pointer-heavy ABI mirror explicit. Call InitVideoGenParams before filling
+// the structure and FreeImages/FreeAudio for returned buffers.
+func (c *Context) GenerateVideoNative(params *NativeVideoGenParams) (*Image, int, *NativeAudio, int, bool) {
+    if c == nil || c.handle == nil || params == nil { return nil, 0, nil, 0, false }
+    var frames *Image
+    var frameCount int32
+    var audio *NativeAudio
+    var fps int32
+    ok := generate_video(c.handle, params, &frames, &frameCount, &audio, &fps)
+    if !ok { return nil, 0, nil, 0, false }
+    return frames, int(frameCount), audio, int(fps), true
+}
+
+func (c *Context) Cancel() { if c != nil && c.handle != nil { sd_cancel_generation(c.handle, SD_CANCEL_ALL) } }
+
+func FreeImages(images *Image, count int) {
+    if images != nil && count > 0 { free_sd_images(images, int32(count)) }
+}
+
+func FreeAudio(audio *NativeAudio) {
+    if audio != nil { free_sd_audio(audio) }
+}
+
+// SaveWebP encodes an RGB/RGBA image with the bundled libwebp.dll and writes
+// it to path. Quality is in the 0..100 range; values outside that range are
+// clamped by libwebp.
+func SaveWebP(image *Image, path string, quality float32) bool {
+    if image == nil || image.Data == nil || image.Width == 0 || image.Height == 0 { return false }
+    if image.Channel != 3 && image.Channel != 4 { return false }
+    var encoded *byte
+    stride := int(image.Width * image.Channel)
+    size := 0
+    if image.Channel == 3 {
+        size = WebPEncodeRGB(image.Data, int(image.Width), int(image.Height), stride, quality, &encoded)
+    } else {
+        size = WebPEncodeRGBA(image.Data, int(image.Width), int(image.Height), stride, quality, &encoded)
+    }
+    if size <= 0 || encoded == nil { return false }
+    defer WebPFree(encoded)
+    file := fopen(cstring(path), cstring("wb"))
+    if file == nil { return false }
+    written := fwrite(encoded, 1, size, file)
+    fclose(file)
+    return written == size
+}
+
+func InitContextParams(params *ContextParams) {
+    if params == nil { return }
+    n := NativeContextParams{}; sd_ctx_params_init(&n)
+    params.NThreads = n.NThreads; params.WType = n.WType; params.RNGType = n.RNGType
+    params.SamplerRNGType = n.SamplerRNGType; params.Prediction = n.Prediction; params.LoRAApplyMode = n.LoRAApplyMode
+    params.EnableMMap = n.EnableMMap; params.FlashAttn = n.FlashAttn; params.DiffusionFlashAttn = n.DiffusionFlashAttn
+    params.TAEPreviewOnly = n.TAEPreviewOnly; params.DiffusionConvDirect = n.DiffusionConvDirect
+    params.VAEConvDirect = n.VAEConvDirect; params.ForceSDXLVAEConvScale = n.ForceSDXLVAEConvScale
+    params.VAEFormat = n.VAEFormat; params.DisablePrefetch = n.DisablePrefetch; params.EagerLoad = n.EagerLoad
+    params.AutoFit = n.AutoFit; params.DisableSegmentedCompute = n.DisableSegmentedCompute
+    params.LinearScale = n.LinearScale; params.AttnScale = n.AttnScale; params.SageAttn = n.SageAttn
+    params.ConditioningCacheSize = n.ConditioningCacheSize
+}
+func InitSampleParams(params *SampleParams) {
+    if params == nil { return }; n := NativeSampleParams{}; sd_sample_params_init(&n)
+    params.Guidance.TxtCFG = n.Guidance.TxtCFG; params.Guidance.ImgCFG = n.Guidance.ImgCFG
+    params.Guidance.DistilledGuidance = n.Guidance.DistilledGuidance
+    params.Guidance.SLG.LayerStart = n.Guidance.SLG.LayerStart; params.Guidance.SLG.LayerEnd = n.Guidance.SLG.LayerEnd
+    params.Guidance.SLG.Scale = n.Guidance.SLG.Scale
+    params.Scheduler = n.Scheduler; params.SampleMethod = n.SampleMethod; params.SampleSteps = n.SampleSteps
+    params.Eta = n.Eta; params.ShiftedTimestep = n.ShiftedTimestep; params.FlowShift = n.FlowShift
+}
+func InitCacheParams(params *CacheParams) {
+    if params == nil { return }; n := NativeCacheParams{}; sd_cache_params_init(&n)
+    params.Mode = n.Mode; params.ReuseThreshold = n.ReuseThreshold; params.StartPercent = n.StartPercent; params.EndPercent = n.EndPercent
+    params.ErrorDecayRate = n.ErrorDecayRate; params.UseRelativeThreshold = n.UseRelativeThreshold; params.ResetErrorOnCompute = n.ResetErrorOnCompute
+    params.FnComputeBlocks = n.FnComputeBlocks; params.BnComputeBlocks = n.BnComputeBlocks; params.ResidualDiffThreshold = n.ResidualDiffThreshold
+    params.MaxWarmupSteps = n.MaxWarmupSteps; params.MaxCachedSteps = n.MaxCachedSteps; params.MaxContinuousCachedSteps = n.MaxContinuousCachedSteps
+    params.TaylorseerNDerivatives = n.TaylorseerNDerivatives; params.TaylorseerSkipInterval = n.TaylorseerSkipInterval
+    params.SCMPolicyDynamic = n.SCMPolicyDynamic; params.SpectrumW = n.SpectrumW; params.SpectrumM = n.SpectrumM
+    params.SpectrumLam = n.SpectrumLam; params.SpectrumWindowSize = n.SpectrumWindowSize; params.SpectrumFlexWindow = n.SpectrumFlexWindow
+    params.SpectrumWarmupSteps = n.SpectrumWarmupSteps; params.SpectrumStopPercent = n.SpectrumStopPercent
+}
+func InitHiresParams(params *HiresParams) {
+    if params == nil { return }; n := NativeHiresParams{}; sd_hires_params_init(&n)
+    params.Enabled = n.Enabled; params.Upscaler = n.Upscaler; params.Scale = n.Scale; params.TargetWidth = n.TargetWidth; params.TargetHeight = n.TargetHeight
+    params.Steps = n.Steps; params.DenoisingStrength = n.DenoisingStrength; params.UpscaleTileSize = n.UpscaleTileSize
+}
+func InitImageGenParams(params *ImageGenParams) {
+    if params == nil { return }; n := NativeImageGenParams{}; sd_img_gen_params_init(&n)
+    params.ClipSkip = n.ClipSkip; params.Width = n.Width; params.Height = n.Height; params.Strength = n.Strength
+    params.Seed = n.Seed; params.BatchCount = n.BatchCount; params.ControlStrength = n.ControlStrength
+    params.IPAdapterStrength = n.IPAdapterStrength; params.QwenImageLayers = n.QwenImageLayers
+    params.CircularX = n.CircularX; params.CircularY = n.CircularY
+    params.SampleParams.Scheduler = n.SampleParams.Scheduler; params.SampleParams.SampleMethod = n.SampleParams.SampleMethod
+    params.SampleParams.SampleSteps = n.SampleParams.SampleSteps; params.SampleParams.Eta = n.SampleParams.Eta
+    params.SampleParams.Guidance.TxtCFG = n.SampleParams.Guidance.TxtCFG; params.SampleParams.Guidance.ImgCFG = n.SampleParams.Guidance.ImgCFG
+    params.SampleParams.Guidance.DistilledGuidance = n.SampleParams.Guidance.DistilledGuidance
+    params.SampleParams.Guidance.SLG.LayerStart = n.SampleParams.Guidance.SLG.LayerStart; params.SampleParams.Guidance.SLG.LayerEnd = n.SampleParams.Guidance.SLG.LayerEnd
+    params.SampleParams.Guidance.SLG.Scale = n.SampleParams.Guidance.SLG.Scale; params.SampleParams.ShiftedTimestep = n.SampleParams.ShiftedTimestep
+    params.SampleParams.FlowShift = n.SampleParams.FlowShift
+    params.CacheParams.Mode = n.CacheParams.Mode; params.CacheParams.ReuseThreshold = n.CacheParams.ReuseThreshold; params.CacheParams.StartPercent = n.CacheParams.StartPercent
+    params.CacheParams.EndPercent = n.CacheParams.EndPercent; params.CacheParams.ErrorDecayRate = n.CacheParams.ErrorDecayRate
+    params.CacheParams.UseRelativeThreshold = n.CacheParams.UseRelativeThreshold; params.CacheParams.ResetErrorOnCompute = n.CacheParams.ResetErrorOnCompute
+    params.CacheParams.FnComputeBlocks = n.CacheParams.FnComputeBlocks; params.CacheParams.BnComputeBlocks = n.CacheParams.BnComputeBlocks
+    params.CacheParams.ResidualDiffThreshold = n.CacheParams.ResidualDiffThreshold; params.CacheParams.MaxWarmupSteps = n.CacheParams.MaxWarmupSteps
+    params.CacheParams.MaxCachedSteps = n.CacheParams.MaxCachedSteps; params.CacheParams.MaxContinuousCachedSteps = n.CacheParams.MaxContinuousCachedSteps
+    params.CacheParams.TaylorseerNDerivatives = n.CacheParams.TaylorseerNDerivatives; params.CacheParams.TaylorseerSkipInterval = n.CacheParams.TaylorseerSkipInterval
+    params.CacheParams.SCMPolicyDynamic = n.CacheParams.SCMPolicyDynamic; params.CacheParams.SpectrumW = n.CacheParams.SpectrumW; params.CacheParams.SpectrumM = n.CacheParams.SpectrumM
+    params.CacheParams.SpectrumLam = n.CacheParams.SpectrumLam; params.CacheParams.SpectrumWindowSize = n.CacheParams.SpectrumWindowSize; params.CacheParams.SpectrumFlexWindow = n.CacheParams.SpectrumFlexWindow
+    params.CacheParams.SpectrumWarmupSteps = n.CacheParams.SpectrumWarmupSteps; params.CacheParams.SpectrumStopPercent = n.CacheParams.SpectrumStopPercent
+    params.HiresParams.Enabled = n.HiresParams.Enabled; params.HiresParams.Upscaler = n.HiresParams.Upscaler; params.HiresParams.Scale = n.HiresParams.Scale
+    params.HiresParams.TargetWidth = n.HiresParams.TargetWidth; params.HiresParams.TargetHeight = n.HiresParams.TargetHeight; params.HiresParams.Steps = n.HiresParams.Steps
+    params.HiresParams.DenoisingStrength = n.HiresParams.DenoisingStrength; params.HiresParams.UpscaleTileSize = n.HiresParams.UpscaleTileSize
+}
+func InitVideoGenParams(params *NativeVideoGenParams) {
+    if params != nil { sd_vid_gen_params_init(params) }
+}
+
+func Version() string { value := sd_version(); if value == nil { return "" }; return string(value) }
+func Commit() string { value := sd_commit(); if value == nil { return "" }; return string(value) }
+func SystemInfo() string { value := sd_get_system_info(); if value == nil { return "" }; return string(value) }
+func PhysicalCoreCount() int { return int(sd_get_num_physical_cores()) }
+
+// Progress is a polling-friendly view of the native generation callback.
+type Progress struct { Step int; Steps int; Time float32 }
+
+func SetProgressPolling(enabled bool) { hike_set_progress_polling(enabled) }
+func FlushStderr() { hike_flush_stderr() }
+func SelectAcceleratorBackend() string {
+    value := hike_select_accelerator_backend()
+    if value == nil { return "" }
+    return string(value)
+}
+func CurrentProgress() Progress {
+    return Progress{Step: hike_progress_step_value(), Steps: hike_progress_steps_value(), Time: hike_progress_time_value()}
+}
+func ResetProgress() { hike_reset_progress() }
+func SetOperationActive(active bool) { hike_set_operation_active(active) }
+func OperationActive() bool { return hike_operation_is_active() }
+
+func SetLogPolling(enabled bool) { hike_set_log_polling(enabled) }
+func LastLog() string {
+    value := hike_last_log_value()
+    if value == nil { return "" }
+    return string(value)
+}
+func SetPreviewPolling(enabled bool, mode int, interval int, denoised bool, noisy bool) {
+    hike_set_preview_polling(enabled, mode, interval, denoised, noisy)
+}
+func CopyPreview() (*Image, bool) {
+    image := Image{}
+    if !hike_copy_preview(&image) { return nil, false }
+    return &image, true
+}
+func PreviewInfo() (int, int) {
+    samplePass := 0; totalSteps := 0
+    hike_get_preview_info(&samplePass, &totalSteps)
+    return samplePass, totalSteps
+}
+
+func PreprocessCanny(image *Image, highThreshold float32, lowThreshold float32, weak float32, strong float32, inverse bool) bool {
+    return image != nil && hike_preprocess_canny(image, highThreshold, lowThreshold, weak, strong, inverse)
+}
+
+func ContextParamsString(params *ContextParams) string {
+    if params == nil { return "" }
+    n := nativeContextParams(params)
+    return string(hike_ctx_params_to_str(&n))
+}
+
+func SampleParamsString(params *SampleParams) string {
+    if params == nil { return "" }
+    n := nativeSampleParams(params)
+    return string(hike_sample_params_to_str(&n))
+}
+
+func ImageGenParamsString(params *ImageGenParams) string {
+    if params == nil { return "" }
+    n := NativeImageGenParams{}
+    sd_img_gen_params_init(&n)
+    nativeImageGenParamsInto(params, &n)
+    return string(hike_img_gen_params_to_str(&n))
+}
+
+func SDTypeFromString(value string) int { return str_to_sd_type(nativeCString(value)) }
+func RNGTypeFromString(value string) int { return str_to_rng_type(nativeCString(value)) }
+func SampleMethodFromString(value string) int { return str_to_sample_method(nativeCString(value)) }
+func SchedulerFromString(value string) int { return str_to_scheduler(nativeCString(value)) }
+func PredictionFromString(value string) int { return str_to_prediction(nativeCString(value)) }
+func PreviewFromString(value string) int { return str_to_preview(nativeCString(value)) }
+func LoRAApplyModeFromString(value string) int { return str_to_lora_apply_mode(nativeCString(value)) }
+func HiresUpscalerFromString(value string) int { return str_to_sd_hires_upscaler(nativeCString(value)) }
+
+func ConvertModel(inputPath string, vaePath string, outputPath string, outputType int, tensorTypeRules string, convertName bool) bool {
+    return convert(nativeCString(inputPath), nativeCString(vaePath), nativeCString(outputPath), outputType, nativeCString(tensorTypeRules), convertName)
+}
+
+func ConvertModelWithComponents(modelPath string, clipLPath string, clipGPath string, t5xxlPath string, diffusionModelPath string, vaePath string, outputPath string, outputType int, tensorTypeRules string, convertName bool, nThreads int, loras *NativeLoRA, loraCount int) bool {
+    return convert_with_components(nativeCString(modelPath), nativeCString(clipLPath), nativeCString(clipGPath), nativeCString(t5xxlPath), nativeCString(diffusionModelPath), nativeCString(vaePath), nativeCString(outputPath), outputType, nativeCString(tensorTypeRules), convertName, nThreads, loras, loraCount)
+}
+
+func LoadIMatrix(path string) bool { return load_imatrix(nativeCString(path)) }
+func SaveIMatrix(path string) { save_imatrix(nativeCString(path)) }
+func EnableIMatrixCollection() { enable_imatrix_collection() }
+func DisableIMatrixCollection() { disable_imatrix_collection() }
+

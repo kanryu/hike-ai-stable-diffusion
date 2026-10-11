@@ -1,0 +1,5 @@
+# AI model weights
+*.safetensors
+
+# Tools directory
+/tools/

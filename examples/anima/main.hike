@@ -1,0 +1,60 @@
+package main
+
+import "github.com/kanryu/hike-ai-stable-diffusion/sd"
+import _ "github.com/kanryu/hike-ai-stable-diffusion/shared"
+
+extern func printf(format cstring, ...) int
+extern func __hike_stderr_write(data cstring, length int32)
+
+func progressLabel(message string) {
+    __hike_stderr_write(cstring(message), int32(len(message)))
+}
+
+func main() int {
+    progressLabel("[1/3] loading Anima diffusion, VAE, and text encoder...\n")
+
+    params := sd.ContextParams{}
+    sd.InitContextParams(&params)
+    // Anima intentionally uses three independent model files.
+    params.DiffusionModelPath = "anima-aesthetic-v1.1.safetensors"
+    params.VAEPath = "qwen_image_vae.safetensors"
+    params.LLMPath = "qwen_3_06b_base.safetensors"
+    params.Backend = "diffusion=cuda0,te=cuda0,vae=cuda0"
+    params.DiffusionFlashAttn = true
+    params.AutoFit = true
+
+    ctx := sd.NewContext(&params)
+    if ctx == nil {
+        printf("failed to load Anima context\n")
+        return 1
+    }
+    defer ctx.Close()
+    progressLabel("[1/3] Anima model components loaded\n")
+
+    request := sd.ImageGenParams{}
+    sd.InitImageGenParams(&request)
+    request.Prompt = "A high-quality anime illustration of Bridget from Guilty Gear, a cheerful blonde young man with bright blue eyes, wearing a blue hooded jacket, pleated black skirt, black gloves, and white socks, holding a yo-yo, standing outdoors on a cracked floor with smoke and fire in the background, dynamic cowboy shot, leaning forward, looking at the viewer, smiling with an open mouth, detailed eyes, detailed face, detailed clothing, detailed background, dramatic lighting, masterpiece, best quality"
+    request.NegativePrompt = "blank image, white image, empty background, blurry, low quality, worst quality, distorted face, bad anatomy, extra fingers, missing fingers, deformed hands, malformed eyes, watermark, text"
+    request.Width = 1024
+    request.Height = 1344
+    request.BatchCount = 1
+    request.SampleParams.Guidance.TxtCFG = 6.0
+    request.SampleParams.SampleMethod = sd.SampleEuler
+    request.SampleParams.SampleSteps = 20
+
+    progressLabel("[2/3] generating Anima image...\n")
+    images, count, ok := ctx.Generate(&request)
+    if !ok || images == nil || count <= 0 {
+        printf("Anima image generation failed\n")
+        return 1
+    }
+    defer sd.FreeImages(images, count)
+
+    progressLabel("[3/3] encoding WebP...\n")
+    if !sd.SaveWebP(&images[0], "output.webp", 90.0) {
+        printf("failed to write output.webp\n")
+        return 1
+    }
+    printf("generated Anima image %dx%d: output.webp\n", images[0].Width, images[0].Height)
+    return 0
+}
