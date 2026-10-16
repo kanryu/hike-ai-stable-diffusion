@@ -1,0 +1,57 @@
+package main
+
+import "github.com/kanryu/hike-ai-stable-diffusion/sd"
+import _ "github.com/kanryu/hike-ai-stable-diffusion/shared"
+
+extern func printf(format cstring, ...) int
+extern func __hike_stderr_write(data cstring, length int32)
+
+func progressLabel(message string) {
+    __hike_stderr_write(cstring(message), int32(len(message)))
+}
+
+func main() int {
+    progressLabel("[1/3] loading Flux.2 Klein 4B diffusion model, VAE, and text encoder...\n")
+    params := sd.ContextParams{}
+    sd.InitContextParams(&params)
+    params.DiffusionModelPath = "flux-2-klein-4b-Q4_K_M.gguf"
+    params.VAEPath = "flux2-vae.safetensors"
+    params.LLMPath = "Qwen3-4B-Q4_K_M.gguf"
+    params.Backend = "diffusion=cuda0,te=cuda0,vae=cuda0"
+    params.AutoFit = true
+
+    ctx := sd.NewContext(&params)
+    if ctx == nil {
+        printf("failed to load Flux.2 Klein 4B context\n")
+        return 1
+    }
+    progressLabel("[1/3] Flux.2 Klein 4B model components loaded\n")
+    defer ctx.Close()
+
+    request := sd.ImageGenParams{}
+    sd.InitImageGenParams(&request)
+    request.Prompt = "A low-contrast faded colors photograph taken in flat, overcast light under a soft, muted sky. A slight blur, out of focus candid portrait of an old fisherman repairing his dark nets on an old wooden boat dock. He is wearing a faded navy wool sweater over a worn, light-colored linen shirt with a collar that is slightly frayed at the edges. He wears dark corduroy trousers showing numerous scuffs and stains, along with old, dirty, mud-caked, faded-green heavy rubber boots. On his head sits an old, worn, vibrant-brown newsboy cap. Flat, diffuse lighting that evenly illuminates the subject without sculpting it, creating soft tonal transitions and low contrast. Strong film grain. Strong vignette darkening the photo's corners, and prominent emulsion imperfections around the inner image edges. Natural imperfections. Accidental composition. Casual snapshot. Primary 50mm lens look."
+    request.NegativePrompt = "blurry, low quality"
+    request.Width = 1024
+    request.Height = 1344
+    request.BatchCount = 1
+    request.SampleParams.Guidance.TxtCFG = 1.0
+    request.SampleParams.SampleMethod = sd.SampleEuler
+    request.SampleParams.SampleSteps = 4
+
+    progressLabel("[2/3] generating image: sampling and VAE decode...\n")
+    images, count, ok := ctx.Generate(&request)
+    if !ok || images == nil || count <= 0 {
+        printf("image generation failed\n")
+        return 1
+    }
+    defer sd.FreeImages(images, count)
+
+    progressLabel("[3/3] encoding WebP...\n")
+    if !sd.SaveWebP(&images[0], "output.webp", 90.0) {
+        printf("failed to write output.webp\n")
+        return 1
+    }
+    printf("generated %dx%d image: output.webp\n", images[0].Width, images[0].Height)
+    return 0
+}

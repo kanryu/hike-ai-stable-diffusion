@@ -1,0 +1,7 @@
+*.gguf
+*.safetensors
+*.pt
+ExamplesKrea2.exe
+main.ll
+output.webp
+*.dll

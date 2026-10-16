@@ -1,0 +1,57 @@
+package main
+
+import "github.com/kanryu/hike-ai-stable-diffusion/sd"
+import _ "github.com/kanryu/hike-ai-stable-diffusion/shared"
+
+extern func printf(format cstring, ...) int
+extern func __hike_stderr_write(data cstring, length int32)
+
+func progressLabel(message string) {
+    __hike_stderr_write(cstring(message), int32(len(message)))
+}
+
+func main() int {
+    progressLabel("[1/3] loading Krea2 Turbo, VAE, and text encoder...\n")
+    params := sd.ContextParams{}
+    sd.InitContextParams(&params)
+    params.DiffusionModelPath = "krea2_turbo-Q3_K_M.gguf"
+    params.VAEPath = "wan_2.1_vae.safetensors"
+    params.LLMPath = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+    params.Backend = "diffusion=cuda0,te=cuda0,vae=cuda0"
+    params.AutoFit = true
+
+    ctx := sd.NewContext(&params)
+    if ctx == nil {
+        printf("failed to load Krea2 Turbo context\n")
+        return 1
+    }
+    progressLabel("[1/3] Krea2 Turbo model components loaded\n")
+    defer ctx.Close()
+
+    request := sd.ImageGenParams{}
+    sd.InitImageGenParams(&request)
+    request.Prompt = "A cinematic editorial photograph of a red fox sitting in a snowy forest at dawn, soft winter light, detailed natural fur, subtle film grain"
+    request.NegativePrompt = "blurry, low quality"
+    request.Width = 1024
+    request.Height = 1024
+    request.BatchCount = 1
+    request.SampleParams.Guidance.TxtCFG = 1.0
+    request.SampleParams.SampleMethod = sd.SampleEuler
+    request.SampleParams.SampleSteps = 4
+
+    progressLabel("[2/3] generating image: sampling and VAE decode...\n")
+    images, count, ok := ctx.Generate(&request)
+    if !ok || images == nil || count <= 0 {
+        printf("image generation failed\n")
+        return 1
+    }
+    defer sd.FreeImages(images, count)
+
+    progressLabel("[3/3] encoding WebP...\n")
+    if !sd.SaveWebP(&images[0], "output.webp", 90.0) {
+        printf("failed to write output.webp\n")
+        return 1
+    }
+    printf("generated %dx%d image: output.webp\n", images[0].Width, images[0].Height)
+    return 0
+}
